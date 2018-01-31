@@ -1,0 +1,273 @@
+#!/usr/bin/python
+
+# -*- coding: utf-8 -*-
+import os
+import re
+import sys
+import pip
+import wheel
+import argparse
+import textwrap
+from subprocess import call, Popen
+
+from jinja2 import Environment
+
+HTML = """
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <title>Change the title</title>
+  <meta name="description" content="YOU SHOULD CANGE THIS">
+  <meta name="author" content="Krzysztof Gregorowicz">
+
+  {% raw %}
+  <link rel="stylesheet" href="{{url_for('static',filename='css/styles.css?v=1.0')}}">
+  {% endraw %}
+  <!--[if lt IE 9]>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv.js"></script>
+  <![endif]-->
+</head>
+
+<body>
+  <h3>{{title}}</h3>
+  <h4>This is an app created by create-flask-app<h4>
+  <p>Getting started guide:</p>
+  <ul>
+    <li>Change the title of your app index template and meta description</li>
+  </ul>
+  {% raw %}
+  <script src="{{url_for('static',filename='js/scripts.js')}}"></script>
+  {% endraw %}
+</body>
+</html>
+"""
+
+CONFIG = """
+# -*- coding: utf-8 -*-
+import os, sys
+basedir = os.path.abspath(os.path.dirname(__file__))
+
+
+class Config:
+    \"\"\"
+        Environment agnostic configuration
+    \"\"\"
+    SECRET_KEY = "CHANGE THIS"
+    ENVIRONMENT = os.getenv('ENVIRONMENT') or 'default'
+
+    @staticmethod
+    def init_app(app):
+        pass
+        
+    print 'Running in %s mode ' % ENVIRONMENT
+
+class DevelopmentConfig(Config):
+    \"\"\"
+        Development configuration
+    \"\"\"
+    DEBUG = True
+
+class TestingConfig(Config):
+    \"\"\"
+        Testing configuration
+    \"\"\"
+    DEBUG = True
+
+class ProductionConfig(Config):
+    \"\"\"
+        Production configuration
+    \"\"\"
+    DEBUG = False
+
+class LocalConfig(Config):
+    DEBUG = True
+
+config = {
+    'development': DevelopmentConfig,
+    'testing': TestingConfig,
+    'production': ProductionConfig,
+    'default': DevelopmentConfig
+}
+"""
+
+WSGI = """
+# -*- coding: utf-8 -*-
+import os, sys
+from app import create_app
+
+app = create_app(os.getenv('ENVIRONMENT') or 'default')
+
+# run production with command: ENVIRONMENT=production gunicorn -w 4 wsgi:app
+# run development with command: python wsgi.py
+if __name__ == '__main__':
+    app.run(port={{port}}, threaded=True, host='{{host}}')
+"""
+
+APP = """
+from flask import Flask
+from config import config
+
+def create_app(config_name):
+    app = Flask(__name__)
+    app.config.from_object(config[config_name])
+    config[config_name].init_app(app)
+
+    from .api_v1 import api as api_blueprint
+    app.register_blueprint(api_blueprint, url_prefix='/api/v1')
+
+    return app
+"""
+
+API = """
+from flask import Blueprint
+
+api = Blueprint('api', __name__)
+"""
+
+def run_code_inspector():
+    dirPath = os.path.dirname(wheel.__file__)
+    call(['code', dirPath])
+
+def install_pip_package(package):
+    pip.main(['install', package])
+
+def str2bool(v):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def print_html_doc():
+    return Environment().from_string(HTML).render(title='App created using create-flask-app by KG')
+
+def print_config_to_file():
+    return Environment().from_string(CONFIG).render()
+
+def print_app_to_file():
+    return Environment().from_string(APP).render()
+
+def print_api_to_file():
+    return Environment().from_string(API).render()
+
+def print_wsgi_to_file(port, host):
+    return Environment().from_string(WSGI).render(port=port, host=host)
+
+def save_file(path, text):
+    f = open(path, 'w+')
+    f.write(text)
+    f.close()
+
+def create_dir_structure(args):
+    """
+        Creates directory structure:
+        [name]/
+            wsgi.py
+            config.py
+            Dockerfile
+            app/
+                __init__.py
+                static/
+                    js/
+                        scripts.js
+                    css/
+                        styles.css
+                templates/
+                    index.html
+                model/
+                    __init__.py
+                api_v1/
+                    __init__.py
+                decorators/
+                    __init__.py
+    """
+    ctx = os.getcwd()
+    name = args['name']
+    projectDir = os.path.join(ctx, name)
+    if os.path.exists(projectDir):
+        import shutil
+        shutil.rmtree(projectDir, ignore_errors=True)
+
+    if os.path.exists(projectDir):
+        print "Project directory already exists exiting now.... bye bye"
+        sys.exit()
+    else:
+        print "CREATING DIRECTORY STRUCTURE"
+        os.mkdir(projectDir)
+        open(os.path.join(projectDir, 'wsgi.py'), 'a').close()
+        save_file(os.path.join(projectDir, 'config.py'), print_config_to_file()) # render config to file
+        save_file(os.path.join(projectDir, 'wsgi.py'), print_wsgi_to_file(args['port'], args['host'])) # render config to file
+        open(os.path.join(projectDir, 'Dockerfile'), 'a').close()
+
+        d1 = os.path.join(projectDir, 'app')
+        os.mkdir(d1)
+        save_file(os.path.join(d1, '__init__.py'), print_app_to_file()) # render app.py to file
+
+        templatesDir = os.path.join(d1, 'templates')
+        os.mkdir(templatesDir)
+        save_file(os.path.join(templatesDir, 'index.html'), print_html_doc())
+
+        os.mkdir(os.path.join(d1, 'static'))
+        os.mkdir(os.path.join(d1, 'static', 'js'))
+        open(os.path.join(d1, 'static', 'js', 'scripts.js'), 'a').close()
+
+        os.mkdir(os.path.join(d1, 'static', 'css'))
+        open(os.path.join(d1, 'static', 'css', 'styles.css'), 'a').close()
+
+        modelDir = os.path.join(d1, 'model')
+        os.mkdir(modelDir)
+        open(os.path.join(modelDir, '__init__.py'), 'a').close()
+
+        apiDir = os.path.join(d1, 'api_v1')
+        os.mkdir(apiDir)
+        save_file(os.path.join(apiDir, '__init__.py'), print_api_to_file())
+
+        decoratorsDir = os.path.join(d1, 'decorators')
+        os.mkdir(decoratorsDir)
+        open(os.path.join(decoratorsDir, '__init__.py'), 'a').close()
+
+        call(['code', projectDir])
+
+# Example
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        prog='PROG',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent('''\
+            Please do not mess up this text!
+            --------------------------------
+                This script creates flask app, 
+                with basic directory 
+                structure and/or with 
+                virtualenv initialized.
+            '''))
+    parser.add_argument('--name', help='Name of application to create, it is also name of created directory', required=True)
+    parser.add_argument('-p','--packages', help='additional packages to install, separated by commas')
+    parser.add_argument('--port', help='app default port', default=8000, nargs='?', type=int)
+    parser.add_argument('--host', help='app default host', default='0.0.0.0', nargs='?', type=str)
+    parser.add_argument("--use-env", type=str2bool, nargs='?', const=True, default=True, help="whether or not to use virtual env")
+    args = vars(parser.parse_args())
+    print args
+    create_dir_structure(args)
+    ctx = os.getcwd()
+    name = args['name']
+    projectDir = os.path.join(ctx, name)
+    os.chdir(projectDir)
+    if args['use_env']:
+        call(['virtualenv','--python=/usr/bin/python', 'env'])
+        activate_this = os.path.join(ctx, name, 'env/bin/activate_this.py')
+        execfile(activate_this, dict(__file__=activate_this))
+        call(['pip', 'install', 'flask'])
+        if args['packages']:
+            packages = args['packages'].split(',')
+            for package in packages:
+                
+                call(['pip', 'install', package])
+        a = call(['pip', 'freeze'])
+        print a
+    call(['python', 'wsgi.py'])
